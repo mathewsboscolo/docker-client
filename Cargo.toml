@@ -1,0 +1,13 @@
+[package]
+name = "docker-client"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+
+hyper-unix-connector = "0.2.2"
+hyper = { version = "0.14.20", features = ["client", "http1", "tcp"] }
