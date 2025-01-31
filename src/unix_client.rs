@@ -7,16 +7,13 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 struct DockerVersion {
     #[serde(rename = "ApiVersion")]
-    api_version: String
+    api_version: String,
 }
 
 impl DockerVersion {
     pub async fn fetch_docker_api_version(socket: &str) -> Result<Self, Box<dyn Error>> {
-        let uri = Uri::new(
-            socket,
-            DockerEndpoint::Version.path()
-        );
-        
+        let uri = Uri::new(socket, DockerEndpoint::Version.path());
+
         let request = Request::get(uri).body(Body::empty()).map_err(|err| {
             println!("Failed to build the request: {}", err);
             err
@@ -56,7 +53,7 @@ impl DockerEndpoint {
             DockerEndpoint::Version => "/version",
             DockerEndpoint::Ping => "/_ping",
             DockerEndpoint::ListContainers => "/containers/json",
-            DockerEndpoint::ListImages => "images/json",
+            DockerEndpoint::ListImages => "/images/json",
         }
     }
 }
@@ -92,45 +89,47 @@ impl DockerResponse {
 pub trait DockerClient {
     type Client;
 
-    fn ping(self) -> impl Future<Output = Result<String, Box<dyn Error>>>;
+    fn ping(&self) -> impl Future<Output = Result<String, Box<dyn Error>>>;
 }
 
 #[derive(Debug, Clone)]
 pub struct UnixDockerClient {
     pub socket: String,
     pub api_version: String,
+    client: Client<UnixClient>,
 }
 
 impl UnixDockerClient {
     pub async fn new(socket: &str) -> Result<Self, Box<dyn Error>> {
-        let docker_version = DockerVersion::fetch_docker_api_version(socket).await
-            .map_err(|err| {
-                println!("Could not find the current docker version");
-                err
-            })?;
+        let docker_version = DockerVersion::fetch_docker_api_version(socket).await?;
+        let client = Client::builder().build(UnixClient);
 
-        Ok(UnixDockerClient {
+        Ok(UnixDockerClient {   
             socket: socket.to_string(),
-            api_version: "v".to_owned() + &docker_version.api_version
+            api_version: format!("v{}", docker_version.api_version),
+            client
         })
     }
 
-    // make the fetch method more abstract by allowing the HTTP method and body/header to be specified
-    // this opens up the possibility of including options for tasks like listing, for example
-    pub async fn fetch(self, endpoint: DockerEndpoint) -> Result<Response<Body>, Box<dyn Error>> {
-        let raw_uri = "/".to_owned() + &self.api_version + endpoint.path();
-        let uri = Uri::new(
-            self.socket,
-            &raw_uri,
-        );
+    pub async fn fetch(
+        &self,
+        endpoint: impl Into<String>,
+        body: Option<String>,
+    ) -> Result<Response<Body>, Box<dyn Error>> {
+        let raw_uri = format!("/{}{}", &self.api_version, endpoint.into());
+        let uri = Uri::new(&self.socket, &raw_uri);
 
-        let request = Request::get(uri).body(Body::empty()).map_err(|err| {
+        let body = match body {
+            Some(body) => Body::from(body.to_string()),
+            None => Body::empty(),
+        };
+
+        let request = Request::get(uri).body(body).map_err(|err| {
             println!("Failed to build the request: {}", err);
             err
         })?;
 
-        let client = Client::builder().build(UnixClient);
-        let response = client.request(request).await.map_err(|err| {
+        let response = self.client.request(request).await.map_err(|err| {
             println!("Failed to send the request: {}", err);
             err
         })?;
@@ -138,11 +137,15 @@ impl UnixDockerClient {
         Ok(response)
     }
 
-    pub async fn fetch_parsed<T>(self, endpoint: DockerEndpoint) -> Result<T, Box<dyn Error>>
+    pub async fn fetch_parsed<T>(
+        &self,
+        endpoint: impl Into<String>,
+        opt_body: Option<String>,
+    ) -> Result<T, Box<dyn Error>>
     where
-        T: for<'a> Deserialize<'a>,
+        T: for<'a> Deserialize<'a>
     {
-        let response = self.fetch(endpoint).await?;
+        let response = self.fetch(endpoint, opt_body).await?;
 
         let status = response.status().as_u16();
         let response = DockerResponse::new(status, response);
@@ -151,8 +154,12 @@ impl UnixDockerClient {
         Ok(parsed)
     }
 
-    pub async fn fetch_as_string(self, endpoint: DockerEndpoint) -> Result<String, Box<dyn Error>> {
-        let response = self.fetch(endpoint).await?;
+    pub async fn fetch_as_string(
+        &self,
+        endpoint: impl Into<String>,
+        opt_body: Option<String>,
+    ) -> Result<String, Box<dyn Error>> {
+        let response = self.fetch(endpoint, opt_body).await?;
 
         let body_bytes = to_bytes(response.into_body()).await.map_err(|err| {
             println!("Failed to read the response body: {}", err);
@@ -166,9 +173,11 @@ impl UnixDockerClient {
 impl DockerClient for UnixDockerClient {
     type Client = UnixDockerClient;
 
-    async fn ping(self) -> Result<String, Box<dyn Error>> {
+    async fn ping(&self) -> Result<String, Box<dyn Error>> {
+        let ping_endpoint = DockerEndpoint::Ping.path().to_owned();
+
         let ping_response = self
-            .fetch_as_string(DockerEndpoint::Ping)
+            .fetch_as_string(ping_endpoint, None)
             .await
             .map_err(|err| {
                 println!("Failed to ping Docker daemon: {}", err);
