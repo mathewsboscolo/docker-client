@@ -26,7 +26,7 @@ impl UnixDockerClient {
             .unwrap_or_else(|| path.to_string());
 
         let containers: Vec<Container> = self
-            .fetch_parsed(query_string, None) // is the string type inference really necessary?
+            .fetch_parsed(query_string, None)
             .await?;
 
         Ok(containers)

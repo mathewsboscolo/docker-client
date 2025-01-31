@@ -1,7 +1,7 @@
 use docker_client::{container::ListContainersParameters, unix_client::{DockerClient, DockerEndpoint, UnixDockerClient}};
 
 const SUCCESS_PING_RESPONSE: &str = "OK";
-const DEFAULT_SOCKET: &str = "/users/mathewsboscolo/.docker/run/docker.sock";
+const DEFAULT_SOCKET: &str = "/.docker/run/docker.sock";
 
 async fn create_docker_client() -> UnixDockerClient {
     UnixDockerClient::new(DEFAULT_SOCKET).await.expect("Failed to create Docker client")
